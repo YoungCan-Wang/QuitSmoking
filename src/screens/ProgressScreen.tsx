@@ -28,74 +28,93 @@ export function ProgressScreen() {
   const currentMilestones = getCurrentHealthMilestones(duration.days);
   const nextMilestone = getNextHealthMilestone(duration.days);
 
-  // 计算本周记录
-  const getWeekData = () => {
-    const today = startOfDay(new Date());
-    const days: { date: string; dayName: string; status: 'success' | 'fail' | 'none' | 'future' }[] = [];
+// 抽烟等级分类
+type SmokeLevel = 'none' | 'perfect' | 'light' | 'medium' | 'heavy' | 'future' | 'unrecorded';
 
-    const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+interface WeekDayData {
+  date: string;
+  dayName: string;
+  smokeLevel: SmokeLevel;
+  smokedCount: number;
+}
 
-    for (let i = 6; i >= 0; i--) {
-      const date = subDays(today, i);
-      const dateStr = format(date, 'yyyy-MM-dd');
-      const record = records.find((r) => r.date === dateStr);
+// 根据抽烟数量获取等级和颜色
+const getSmokeLevel = (count: number, isFuture: boolean): { level: SmokeLevel; color: string; label: string } => {
+  if (isFuture) {
+    return { level: 'future', color: COLORS.border, label: '未到来' };
+  }
+  if (count === 0) {
+    return { level: 'perfect', color: '#4CAF50', label: '完美' };
+  } else if (count <= 3) {
+    return { level: 'light', color: '#8BC34A', label: '偶尔' };
+  } else if (count <= 10) {
+    return { level: 'medium', color: '#FFC107', label: '控制' };
+  } else if (count <= 20) {
+    return { level: 'heavy', color: '#FF9800', label: '较多' };
+  } else {
+    return { level: 'heavy', color: '#F44336', label: '大量' };
+  }
+};
 
-      let status: 'success' | 'fail' | 'none' | 'future' = 'none';
-      if (date > today) {
-        status = 'future';
-      } else if (record) {
-        status = record.smokedCount === 0 ? 'success' : 'fail';
-      }
+// 计算本周记录
+const getWeekData = (records: { date: string; smokedCount: number }[]): WeekDayData[] => {
+  const today = startOfDay(new Date());
+  const days: WeekDayData[] = [];
 
-      days.push({
-        date: dateStr,
-        dayName: dayNames[date.getDay()],
-        status,
-      });
-    }
+  const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-    return days;
-  };
+  for (let i = 6; i >= 0; i--) {
+    const date = subDays(today, i);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const record = records.find((r) => r.date === dateStr);
 
-  const weekData = getWeekData();
+    const isFuture = date > today;
+    const smokedCount = record?.smokedCount ?? -1; // -1表示未记录
+    const { level } = getSmokeLevel(smokedCount, isFuture);
+
+    days.push({
+      date: dateStr,
+      dayName: dayNames[date.getDay()],
+      smokeLevel: isFuture ? 'future' : (smokedCount === -1 ? 'unrecorded' : (smokedCount === 0 ? 'perfect' : smokedCount <= 3 ? 'light' : smokedCount <= 10 ? 'medium' : 'heavy')),
+      smokedCount: smokedCount,
+    });
+  }
+
+  return days;
+};
+
+const weekData = getWeekData(records);
+
+// 获取抽烟等级颜色
+const getSmokeLevelColor = (level: SmokeLevel): string => {
+  switch (level) {
+    case 'perfect': return '#4CAF50';
+    case 'light': return '#8BC34A';
+    case 'medium': return '#FFC107';
+    case 'heavy': return '#FF5722';
+    case 'unrecorded': return COLORS.textLight;
+    case 'future': return COLORS.border;
+    default: return COLORS.textLight;
+  }
+};
+
+// 获取抽烟等级显示文本
+const getSmokeLevelText = (level: SmokeLevel, count: number): string => {
+  switch (level) {
+    case 'perfect': return '✓';
+    case 'light': return `${count}`;
+    case 'medium': return `${count}`;
+    case 'heavy': return `${count}`;
+    case 'unrecorded': return '-';
+    case 'future': return '';
+    default: return '';
+  }
+};
 
   // 计算进度百分比
   const progressPercent = nextMilestone
     ? Math.min((duration.days / nextMilestone.timeInDays) * 100, 100)
     : 100;
-
-  const renderWeekDay = ({
-    item,
-    index,
-  }: {
-    item: { dayName: string; status: string };
-    index: number;
-  }) => {
-    const getStatusColor = () => {
-      switch (item.status) {
-        case 'success':
-          return COLORS.success;
-        case 'fail':
-          return COLORS.error;
-        case 'future':
-          return COLORS.border;
-        default:
-          return COLORS.textLight;
-      }
-    };
-
-    return (
-      <View style={styles.weekDay}>
-        <Text style={styles.weekDayName}>{item.dayName}</Text>
-        <View
-          style={[
-            styles.weekDayDot,
-            { backgroundColor: getStatusColor() },
-          ]}
-        />
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -147,45 +166,51 @@ export function ProgressScreen() {
         <Card style={styles.weekCard}>
           <Text style={styles.sectionTitle}>本周记录</Text>
           <View style={styles.weekContainer}>
-            {weekData.map((item, index) => (
+            {weekData.map((item) => (
               <View key={item.date} style={styles.weekDay}>
                 <Text style={styles.weekDayName}>{item.dayName}</Text>
                 <View
                   style={[
                     styles.weekDayDot,
-                    {
-                      backgroundColor:
-                        item.status === 'success'
-                          ? COLORS.success
-                          : item.status === 'fail'
-                          ? COLORS.error
-                          : item.status === 'future'
-                          ? COLORS.border
-                          : COLORS.textLight,
-                    },
+                    { backgroundColor: getSmokeLevelColor(item.smokeLevel) },
                   ]}
-                />
+                >
+                  <Text style={styles.weekDayCount}>
+                    {getSmokeLevelText(item.smokeLevel, item.smokedCount)}
+                  </Text>
+                </View>
               </View>
             ))}
           </View>
+          
+          {/* 图例说明 */}
           <View style={styles.legend}>
             <View style={styles.legendItem}>
-              <View
-                style={[styles.legendDot, { backgroundColor: COLORS.success }]}
-              />
-              <Text style={styles.legendText}>戒烟成功</Text>
+              <View style={[styles.legendDot, { backgroundColor: '#4CAF50' }]} />
+              <Text style={styles.legendText}>完美(0支)</Text>
             </View>
             <View style={styles.legendItem}>
-              <View
-                style={[styles.legendDot, { backgroundColor: COLORS.error }]}
-              />
-              <Text style={styles.legendText}>有抽烟</Text>
+              <View style={[styles.legendDot, { backgroundColor: '#8BC34A' }]} />
+              <Text style={styles.legendText}>偶尔(1-3支)</Text>
             </View>
             <View style={styles.legendItem}>
-              <View
-                style={[styles.legendDot, { backgroundColor: COLORS.textLight }]}
-              />
+              <View style={[styles.legendDot, { backgroundColor: '#FFC107' }]} />
+              <Text style={styles.legendText}>控制(4-10支)</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#FF5722' }]} />
+              <Text style={styles.legendText}>较多(>10支)</Text>
+            </View>
+          </View>
+          
+          <View style={styles.legendSecondRow}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: COLORS.textLight }]} />
               <Text style={styles.legendText}>未记录</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: COLORS.border }]} />
+              <Text style={styles.legendText}>未到来</Text>
             </View>
           </View>
         </Card>
@@ -305,16 +330,29 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   weekDayDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weekDayCount: {
+    fontSize: FONT_SIZE.sm,
+    fontWeight: 'bold',
+    color: COLORS.white,
   },
   legend: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'center',
     paddingTop: SPACING.md,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
+  },
+  legendSecondRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: SPACING.sm,
   },
   legendItem: {
     flexDirection: 'row',
