@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
-import { AppState, AppAction, UserSettings, QuitRecord, Achievement } from '../types';
+import { AppState, AppAction, UserSettings, QuitRecord, Achievement, VoiceBlessing } from '../types';
 import { DEFAULT_SETTINGS } from '../constants/theme';
 import { ACHIEVEMENTS } from '../constants/achievements';
 import { StorageService } from '../services/storage';
@@ -10,6 +10,7 @@ const initialState: AppState = {
   settings: DEFAULT_SETTINGS,
   records: [],
   achievements: [...ACHIEVEMENTS],
+  blessings: [],
   isLoading: true,
 };
 
@@ -24,7 +25,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
         settings: action.payload.settings,
         records: action.payload.records,
         achievements: action.payload.achievements,
+        blessings: action.payload.blessings || [],
         isLoading: false,
+      };
+
+    case 'ADD_BLESSING':
+      return {
+        ...state,
+        blessings: [...state.blessings, action.payload],
+      };
+
+    case 'DELETE_BLESSING':
+      return {
+        ...state,
+        blessings: state.blessings.filter((b) => b.id !== action.payload),
       };
 
     case 'UPDATE_SETTINGS':
@@ -66,6 +80,8 @@ interface AppContextType {
   addRecord: (record: Omit<QuitRecord, 'timestamp'>) => Promise<void>;
   resetData: () => Promise<void>;
   checkAndUnlockAchievements: () => Promise<void>;
+  addBlessing: (blessing: VoiceBlessing) => Promise<void>;
+  deleteBlessing: (id: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -80,15 +96,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadData = async () => {
     try {
-      const [settings, records, achievements] = await Promise.all([
+      const [settings, records, achievements, blessings] = await Promise.all([
         StorageService.loadSettings(),
         StorageService.loadRecords(),
         StorageService.loadAchievements(),
+        StorageService.loadBlessings(),
       ]);
 
       dispatch({
         type: 'LOAD_DATA',
-        payload: { settings, records, achievements },
+        payload: { settings, records, achievements, blessings },
       });
     } catch (error) {
       console.error('加载数据失败:', error);
@@ -158,6 +175,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await StorageService.resetAllData();
   };
 
+  const addBlessing = async (blessing: VoiceBlessing) => {
+    console.log('[AppContext] addBlessing 开始, blessing:', blessing.id);
+    console.log('[AppContext] 当前 state.blessings 数量:', state.blessings.length);
+    
+    dispatch({ type: 'ADD_BLESSING', payload: blessing });
+    
+    // 使用最新的 blessings 数组（包含新添加的），避免闭包问题
+    const newBlessings = [...state.blessings, blessing];
+    console.log('[AppContext] 保存到 AsyncStorage, 新数组长度:', newBlessings.length);
+    
+    try {
+      await StorageService.saveBlessings(newBlessings);
+      console.log('[AppContext] saveBlessings 完成');
+    } catch (error) {
+      console.error('[AppContext] saveBlessings 失败:', error);
+      throw error;
+    }
+  };
+
+  const deleteBlessing = async (id: string) => {
+    console.log('[AppContext] deleteBlessing 开始, id:', id);
+    dispatch({ type: 'DELETE_BLESSING', payload: id });
+    // 使用最新的数组，避免闭包问题
+    const newBlessings = state.blessings.filter((b) => b.id !== id);
+    await StorageService.saveBlessings(newBlessings);
+    console.log('[AppContext] deleteBlessing 完成');
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -166,6 +211,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         addRecord,
         resetData,
         checkAndUnlockAchievements,
+        addBlessing,
+        deleteBlessing,
       }}
     >
       {children}

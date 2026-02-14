@@ -28,6 +28,9 @@ web-build/
 *.log
 npm-debug.*
 
+# Catpaw
+.catpaw/
+
 # Local env files
 .env
 .env.local

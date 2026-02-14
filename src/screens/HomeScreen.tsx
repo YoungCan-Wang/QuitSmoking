@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../context/AppContext';
 import { Card, Button, StatCard } from '../components';
 import { COLORS, FONT_SIZE, SPACING, BORDER_RADIUS } from '../constants/theme';
@@ -22,16 +22,22 @@ import {
   calculateSavedCigarettes,
   calculateConsecutiveDays,
 } from '../utils/dateUtils';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { MOTIVATIONAL_QUOTES } from '../constants/achievements';
+import { playAudio, stopAudio, formatDuration } from '../services/audioService';
+import { Audio } from 'expo-av';
 
 export function HomeScreen() {
   const { state, addRecord, updateSettings } = useApp();
-  const { settings, records } = state;
+  const { settings, records, blessings } = state;
 
   const [refreshing, setRefreshing] = useState(false);
   const [duration, setDuration] = useState(calculateQuitDuration(settings.quitDate));
   const [showCheckInModal, setShowCheckInModal] = useState(false);
+  const [showSOSModal, setShowSOSModal] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentBlessing, setCurrentBlessing] = useState<string | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
   const [todayRecord, setTodayRecord] = useState<{
     smokedCount: number;
     cravingLevel: number;
@@ -62,6 +68,25 @@ export function HomeScreen() {
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const hasCheckedInToday = records.some((r) => r.date === todayStr);
 
+  // 检查戒烟日期是否在未来
+  const quitDate = parseISO(settings.quitDate);
+  const isFuture = quitDate > new Date();
+  
+  // 计算戒烟开始的倒计时
+  const getCountdown = () => {
+    const now = new Date();
+    const diff = quitDate.getTime() - now.getTime();
+    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.ceil((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    
+    if (days > 0) {
+      return { days, hours, text: `还有 ${days} 天 ${hours} 小时` };
+    }
+    return { days: 0, hours: 0, text: '' };
+  };
+  
+  const countdown = getCountdown();
+
   // 计算统计数据
   const savedMoney = calculateSavedMoney(
     settings.dailyCigaretteCount,
@@ -90,6 +115,52 @@ export function HomeScreen() {
     }
   };
 
+  // 播放随机祝福语音
+  const handlePlayRandomBlessing = async () => {
+    if (blessings.length === 0) {
+      Alert.alert('暂无祝福', '请让亲友在设置中添加祝福语音');
+      return;
+    }
+
+    try {
+      // 随机选择一个祝福
+      const randomIndex = Math.floor(Math.random() * blessings.length);
+      const selectedBlessing = blessings[randomIndex];
+      setCurrentBlessing(selectedBlessing.speakerName);
+
+      // 停止之前的播放
+      if (soundRef.current) {
+        await stopAudio(soundRef.current);
+      }
+
+      setIsPlaying(true);
+      const sound = await playAudio(selectedBlessing.filePath);
+      soundRef.current = sound;
+
+      // 监听播放完成
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setIsPlaying(false);
+          setCurrentBlessing(null);
+        }
+      });
+    } catch (error) {
+      console.error('播放祝福失败:', error);
+      Alert.alert('播放失败', '无法播放祝福语音');
+      setIsPlaying(false);
+    }
+  };
+
+  // 停止播放
+  const handleStopPlaying = async () => {
+    if (soundRef.current) {
+      await stopAudio(soundRef.current);
+      soundRef.current = null;
+    }
+    setIsPlaying(false);
+    setCurrentBlessing(null);
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <ScrollView
@@ -105,70 +176,109 @@ export function HomeScreen() {
       >
         {/* 戒烟天数展示 */}
         <View style={styles.daysContainer}>
-          <Text style={styles.daysNumber}>{duration.days}</Text>
-          <Text style={styles.daysLabel}>天</Text>
+          {isFuture ? (
+            <>
+              <Text style={styles.daysNumber}>{countdown.days}</Text>
+              <Text style={styles.daysLabel}>天后</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.daysNumber}>{duration.days}</Text>
+              <Text style={styles.daysLabel}>天</Text>
+            </>
+          )}
         </View>
-        <Text style={styles.statusText}>{formatQuitDays(duration.days)}</Text>
+        <Text style={styles.statusText}>
+          {isFuture ? '距离戒烟开始还有' : formatQuitDays(duration.days)}
+        </Text>
 
         {/* 戒烟时长详情 */}
         <Card style={styles.durationCard}>
-          <Text style={styles.durationTitle}>戒烟时长</Text>
-          <Text style={styles.durationValue}>
-            {formatQuitDuration(duration)}
-          </Text>
+          {isFuture ? (
+            <>
+              <Text style={styles.durationTitle}>戒烟开始于</Text>
+              <Text style={styles.durationValue}>
+                {format(quitDate, 'yyyy年MM月dd日 HH:mm')}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.durationTitle}>戒烟时长</Text>
+              <Text style={styles.durationValue}>
+                {formatQuitDuration(duration)}
+              </Text>
+            </>
+          )}
         </Card>
 
         {/* 打卡按钮 */}
         <TouchableOpacity
           style={[
             styles.checkInButton,
-            hasCheckedInToday && styles.checkInButtonDone,
+            (hasCheckedInToday || isFuture) && styles.checkInButtonDisabled,
           ]}
           onPress={() => setShowCheckInModal(true)}
-          disabled={hasCheckedInToday}
+          disabled={hasCheckedInToday || isFuture}
         >
           <Text style={styles.checkInButtonText}>
-            {hasCheckedInToday ? '今日已完成打卡' : '今日打卡'}
+            {isFuture
+              ? '戒烟尚未开始'
+              : hasCheckedInToday
+              ? '今日已完成打卡'
+              : '今日打卡'}
           </Text>
         </TouchableOpacity>
 
         {/* 统计卡片 */}
-        <View style={styles.statsRow}>
-          <StatCard
-            title="节省金额"
-            value={`¥${savedMoney.toFixed(2)}`}
-            subtitle="累计节省"
-            color={COLORS.primary}
-          />
-          <View style={styles.statSpacer} />
-          <StatCard
-            title="未吸烟"
-            value={`${savedCigarettes}`}
-            subtitle="累计支"
-            color={COLORS.accent}
-          />
-        </View>
+        {!isFuture && (
+          <>
+            <View style={styles.statsRow}>
+              <StatCard
+                title="节省金额"
+                value={`¥${savedMoney.toFixed(2)}`}
+                subtitle="累计节省"
+                color={COLORS.primary}
+              />
+              <View style={styles.statSpacer} />
+              <StatCard
+                title="未吸烟"
+                value={`${savedCigarettes}`}
+                subtitle="累计支"
+                color={COLORS.accent}
+              />
+            </View>
 
-        <View style={styles.statsRow}>
-          <StatCard
-            title="连续戒烟"
-            value={`${consecutiveDays}`}
-            subtitle="天"
-            color={COLORS.primaryLight}
-          />
-          <View style={styles.statSpacer} />
-          <StatCard
-            title="戒烟次数"
-            value={`${records.length}`}
-            subtitle="次打卡"
-            color={COLORS.secondary}
-          />
-        </View>
+            <View style={styles.statsRow}>
+              <StatCard
+                title="连续戒烟"
+                value={`${consecutiveDays}`}
+                subtitle="天"
+                color={COLORS.primaryLight}
+              />
+              <View style={styles.statSpacer} />
+              <StatCard
+                title="戒烟次数"
+                value={`${records.length}`}
+                subtitle="次打卡"
+                color={COLORS.secondary}
+              />
+            </View>
+          </>
+        )}
 
         {/* 鼓励语 */}
         <Card style={styles.quoteCard}>
           <Text style={styles.quoteText}>{quote}</Text>
         </Card>
+
+        {/* SOS紧急求助按钮 */}
+        <TouchableOpacity
+          style={styles.sosButton}
+          onPress={() => setShowSOSModal(true)}
+        >
+          <Text style={styles.sosButtonIcon}>🆘</Text>
+          <Text style={styles.sosButtonText}>忍不住了？听亲友祝福</Text>
+        </TouchableOpacity>
       </ScrollView>
 
       {/* 打卡模态框 */}
@@ -263,6 +373,79 @@ export function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* SOS紧急求助模态框 */}
+      <Modal
+        visible={showSOSModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          if (!isPlaying) {
+            setShowSOSModal(false);
+          }
+        }}
+      >
+        <View style={styles.sosModalOverlay}>
+          <View style={styles.sosModalContent}>
+            <Text style={styles.sosModalTitle}>
+              {isPlaying ? '正在播放...' : '听亲友祝福'}
+            </Text>
+            
+            {isPlaying && currentBlessing && (
+              <View style={styles.playingIndicator}>
+                <Text style={styles.playingName}>{currentBlessing}的祝福</Text>
+                <View style={styles.waveContainer}>
+                  <Text style={styles.waveText}>🎵</Text>
+                  <Text style={styles.waveText}>🎵</Text>
+                  <Text style={styles.waveText}>🎵</Text>
+                </View>
+              </View>
+            )}
+
+            {!isPlaying && (
+              <>
+                <Text style={styles.sosModalSubtitle}>
+                  {blessings.length > 0
+                    ? `已有 ${blessings.length} 条亲友祝福`
+                    : '暂无亲友祝福'}
+                </Text>
+                <Text style={styles.sosModalTip}>
+                  {blessings.length > 0
+                    ? '点击下方按钮随机播放一条祝福语音'
+                    : '请让亲友在设置中添加祝福语音'}
+                </Text>
+              </>
+            )}
+
+            <View style={styles.sosModalButtons}>
+              {isPlaying ? (
+                <Button
+                  title="停止播放"
+                  variant="outline"
+                  onPress={handleStopPlaying}
+                  style={styles.sosModalButton}
+                />
+              ) : (
+                <Button
+                  title="随机播放祝福"
+                  onPress={handlePlayRandomBlessing}
+                  disabled={blessings.length === 0}
+                  style={styles.sosModalButton}
+                />
+              )}
+              <Button
+                title="关闭"
+                variant="outline"
+                onPress={() => {
+                  handleStopPlaying();
+                  setShowSOSModal(false);
+                }}
+                style={styles.sosModalButton}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -277,6 +460,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: SPACING.md,
+    paddingBottom: SPACING.xxl, // 添加底部内边距，避免被导航栏遮挡
   },
   daysContainer: {
     flexDirection: 'row',
@@ -324,6 +508,9 @@ const styles = StyleSheet.create({
   },
   checkInButtonDone: {
     backgroundColor: COLORS.success,
+  },
+  checkInButtonDisabled: {
+    backgroundColor: COLORS.border,
   },
   checkInButtonText: {
     color: COLORS.white,
@@ -419,5 +606,82 @@ marginTop: SPACING.lg,
   modalButton: {
     flex: 1,
     marginHorizontal: SPACING.xs,
+  },
+  // SOS按钮样式
+  sosButton: {
+    backgroundColor: '#FF6B6B',
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    alignItems: 'center',
+    marginBottom: SPACING.xl,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  sosButtonIcon: {
+    fontSize: 24,
+    marginRight: SPACING.sm,
+  },
+  sosButtonText: {
+    color: COLORS.white,
+    fontSize: FONT_SIZE.md,
+    fontWeight: '600',
+  },
+  // SOS模态框样式
+  sosModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.lg,
+  },
+  sosModalContent: {
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.xl,
+    padding: SPACING.xl,
+    width: '100%',
+    alignItems: 'center',
+  },
+  sosModalTitle: {
+    fontSize: FONT_SIZE.xl,
+    fontWeight: 'bold',
+    color: COLORS.text,
+    marginBottom: SPACING.lg,
+  },
+  sosModalSubtitle: {
+    fontSize: FONT_SIZE.lg,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: SPACING.sm,
+  },
+  sosModalTip: {
+    fontSize: FONT_SIZE.md,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    marginBottom: SPACING.xl,
+  },
+  playingIndicator: {
+    alignItems: 'center',
+    marginVertical: SPACING.xl,
+  },
+  playingName: {
+    fontSize: FONT_SIZE.xl,
+    fontWeight: '600',
+    color: COLORS.primary,
+    marginBottom: SPACING.md,
+  },
+  waveContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  waveText: {
+    fontSize: 32,
+    marginHorizontal: SPACING.xs,
+  },
+  sosModalButtons: {
+    width: '100%',
+    marginTop: SPACING.md,
+  },
+  sosModalButton: {
+    marginBottom: SPACING.sm,
   },
 });

@@ -1,32 +1,32 @@
 {
   "expo": {
-    "name": "QuitSmoke",
+    "name": "戒烟助手",
     "slug": "QuitSmoke",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./app-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./app-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#10B981"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.QuitSmoke"
+      "bundleIdentifier": "com.quitsmoke.app"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./app-icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.QuitSmoke"
+      "package": "com.quitsmoke.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./app-icon.png"
     }
   }
 }
